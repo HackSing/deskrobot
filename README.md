@@ -30,13 +30,13 @@ watcherobot app run .
 
 ## 分工
 
-三块。**今天演示以 `docs/演示对接_mock版.md` 为准**：硬件侧和 H5 各自需要实现什么、字段是什么、怎么联调都在里面。接手联调先看 `docs/交接_演示联调.md`，自测跑 `python demo/e2e_demo.py`。任务清单和每个功能的框架见 `docs/分工方案.md`；演示后的完整版见 `docs/H5对接方案_MVP.md` 和 `docs/接口说明.md`。
+三块。**今天演示以 `docs/演示对接_mock版.md` 为准**：硬件侧和 H5 各自需要实现什么、字段是什么、怎么联调都在里面。接手联调先看 `docs/交接_演示联调.md`，自测跑 `python demo/e2e_demo.py`。前端怎么接、怎么改、怎么构建见 `docs/前端对接_纪要推送.md`。任务清单和每个功能的框架见 `docs/分工方案.md`；演示后的完整版见 `docs/H5对接方案_MVP.md` 和 `docs/接口说明.md`。
 
 | 块 | 目录 | 要做的 |
 | --- | --- | --- |
 | 硬件侧：语音、动效、硬件输入输出 | `speech/` `robot_io/` | 开始和结束的唤醒词"小登"，会中持续录音，播报中被打断；`providers.py` 先接云端 TTS 再接 ASR，`segmenter.py` 真机调阈值，`cues.py` 真机核对行为 ID 和灯效 |
 | 大脑 | `core/` `brain/` `contracts.py` `main.py` `app.py` `web/server.py` | 状态机、意图识别、带记忆和联网的问答、跑题、纪要与待办确认、打断处理、房间接口与快照推送；守门人 |
-| 前端 H5 | `web/static/` | 发起人页、参与人页；发起后出二维码，扫码加入，上传资料，会中看板，散会后纪要推到每个人手机 |
+| 前端 H5 | `web/h5/`（源码）`web/static/h5/`（构建产物，挂在 `/h5`） | 对方的 React 页面；现已接会后纪要推送，见 `docs/前端对接_纪要推送.md`。改完 `cd web/h5 && npm run build` 再提交 |
 
 演示彩排全员承担，大脑牵头。
 

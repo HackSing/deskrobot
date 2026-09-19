@@ -56,10 +56,19 @@ def build_app(orch) -> FastAPI:
     async def index():
         return FileResponse(STATIC / "index.html")
 
-    @app.get("/h5")
-    async def h5():
+    # H5 有两版：web/static/h5/ 是对方 React 页面的构建产物（主线，挂在 /h5），
+    # web/static/h5.html 是单文件保底页（挂在 /h5-lite；没有构建产物时也顶到 /h5）。
+    H5_DIR = STATIC / "h5"
+
+    @app.get("/h5-lite")
+    async def h5_lite():
         path = STATIC / "h5.html"
         return FileResponse(path) if path.exists() else JSONResponse({"error": "h5.html 还没做"}, 404)
+
+    if not (H5_DIR / "index.html").exists():
+        @app.get("/h5")
+        async def h5_fallback():
+            return await h5_lite()
 
     @app.get("/api/state")
     async def state():
@@ -138,5 +147,7 @@ def build_app(orch) -> FastAPI:
         finally:
             unsubscribe()
 
+    if (H5_DIR / "index.html").exists():
+        app.mount("/h5", StaticFiles(directory=H5_DIR, html=True), name="h5")
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     return app
