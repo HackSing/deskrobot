@@ -1,5 +1,6 @@
 """假大脑：不联网、不花钱，用正则和关键词给出像样的结果。够把整条链路串通。"""
 from __future__ import annotations
+import os
 import re
 
 from contracts import AgendaItem, Answer, Context, Minutes, OpeningInfo, Todo, Utterance
@@ -46,7 +47,7 @@ class FakeBrain:
         todos, conclusions = [], []
         for u in ctx.transcript:
             m = re.search(rf"({'|'.join(map(re.escape, names))})[，,]?(.*?(?:今天|明天|周[一二三四五六日天]|下周.?|月底)前?)(.+)", u.text)
-            if m and "主持人" not in u.text:
+            if m and os.environ.get("ROBOT_NAME", "主持人") not in u.text:
                 todos.append(Todo(project="", owner=m.group(1), due=m.group(2).strip(), content=m.group(3).strip("，。 ")))
             elif re.search(r"(就定|决定|结论是|那就)", u.text):
                 conclusions.append(u.text)

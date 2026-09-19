@@ -21,6 +21,13 @@ OFF_TOPIC_EVERY = float(os.environ.get("OFF_TOPIC_EVERY", "30"))   # 秒
 CONFIRM_WAIT = float(os.environ.get("CONFIRM_WAIT", "8"))           # 每条待办等拍背的秒数
 DEFAULT_PROJECT = os.environ.get("DEFAULT_PROJECT", "默认项目")
 
+# ---------- 演示模式（默认全关，不影响正常流程）----------
+DEMO_MODE = os.environ.get("DEMO_MODE", "0") == "1"                 # 1 = 开场后自动灌 mock 会议记录
+MOCK_DRIP_SECONDS = float(os.environ.get("MOCK_DRIP_SECONDS", "4")) # 每条 mock 记录的间隔
+ASK_FILLER = os.environ.get("ASK_FILLER", "")                       # 非空：提问后先说一句垫话
+END_TEXT = os.environ.get("END_TEXT", "")                           # 非空：会议结束先说这句
+CONFIRM_TODOS = os.environ.get("CONFIRM_TODOS", "1") == "1"         # 0 = 不做逐条待办拍背确认
+
 
 class Orchestrator:
     def __init__(self, speech: SpeechIO, robot: RobotIO, brain: Brain, robot_name: str) -> None:
@@ -40,10 +47,13 @@ class Orchestrator:
         self._last_off_check = 0.0
         self._touch: asyncio.Event = asyncio.Event()
         self._busy = asyncio.Lock()           # 同一时刻只处理一条指令
+        self.last_cue = "standby"             # 只给看板看，不改 RobotIO 接口
+        self.say_id = 0
+        self._drip: asyncio.Task | None = None
 
     # ---------- 入口 ----------
     async def run(self) -> None:
-        await self.robot.cue("standby")
+        await self._cue("standby")
         await self.robot.set_progress(-1)
         await asyncio.gather(
             self.speech.run(self.on_utterance),
@@ -77,6 +87,7 @@ class Orchestrator:
 
     # ---------- 指令 ----------
     async def _start(self, raw: str) -> None:
+        self._stop_drip()
         info = await self.brain.parse_opening(raw)
         project = info.project or DEFAULT_PROJECT
         self.prep = store.load_prep(project) or MeetingPrep(
@@ -91,7 +102,7 @@ class Orchestrator:
         self.started_at = self._last_off_check = time.time()
         self.state = "meeting"
         await self.robot.face_tracking(True)
-        await self.robot.cue("meeting_start")
+        await self._cue("meeting_start")
         await self.robot.set_progress(0)
         todos = store.open_todos(project)
         text = f"{project}会议开始，共 {self.prep.total_minutes:g} 分钟。"
@@ -100,17 +111,21 @@ class Orchestrator:
         if self.prep.materials:
             text += f"今天的 {len(self.prep.materials)} 份资料我看过了。"
         await self._say(text)
+        if DEMO_MODE:
+            self._drip = asyncio.create_task(self._drip_mock())
 
     async def _mark(self, arg: str) -> None:
         content = arg or (self.transcript[-2].text if len(self.transcript) >= 2 else "")
         if content:
             self.marks.append(content)
-        await self.robot.cue("mark")
-        await self.robot.cue("idle")
+        await self._cue("mark")
+        await self._cue("idle")
         await self._publish()
 
     async def _ask(self, question: str) -> None:
-        await self.robot.cue("thinking")
+        if ASK_FILLER:
+            await self._say(ASK_FILLER)
+        await self._cue("thinking")
         ans = await self.brain.answer(question, self._context())
         self.last_answer = {"question": question, "text": ans.text, "source": ans.source}
         label = SOURCE_LABEL.get(ans.source, ans.source)
@@ -118,25 +133,31 @@ class Orchestrator:
 
     async def _end(self) -> None:
         self.state = "confirming"
-        await self.robot.cue("thinking")
+        await self._cue("thinking")
+        self._stop_drip()
+        if END_TEXT:
+            await self._say(END_TEXT)
         self.minutes = await self.brain.make_minutes(self._context(), self.marks)
         for todo in self.minutes.todos:
             todo.project, todo.meeting_id = self.prep.project, self.meeting_id
+            if not CONFIRM_TODOS:                 # 演示里不逐条拍背，直接落库
+                continue
             self._touch.clear()                   # 播报期间拍背也算数
             await self._say(f"{todo.owner}，{todo.due}{todo.content}，对吗？")
-            await self.robot.cue("confirm_ask")
+            await self._cue("confirm_ask")
             try:
                 await asyncio.wait_for(self._touch.wait(), CONFIRM_WAIT)
                 todo.confirmed = True
-                await self.robot.cue("confirm_ok")
+                await self._cue("confirm_ok")
             except asyncio.TimeoutError:
                 pass
             await self._publish()
         store.save_meeting(self.meeting_id, self.prep.project, self.minutes, self.transcript)
-        await self._say(f"{len(self.minutes.conclusions)} 条结论，{len(self.minutes.todos)} 条待办，已保存。")
+        if CONFIRM_TODOS:
+            await self._say(f"{len(self.minutes.conclusions)} 条结论，{len(self.minutes.todos)} 条待办，已保存。")
         await self.robot.face_tracking(False)
         await self.robot.set_progress(-1)
-        await self.robot.cue("standby")
+        await self._cue("standby")
         self.state = "idle"
         await self._publish()
 
@@ -155,12 +176,12 @@ class Orchestrator:
             if ratio >= 1 and not self._over_done:
                 self._over_done = True
                 async with self._busy:
-                    await self.robot.cue("overtime")
+                    await self._cue("overtime")
                     await self._say("会议已经超时了。")
             elif self.elapsed > item_end and idx not in self._item_over and idx < len(self.prep.agenda) - 1:
                 self._item_over.add(idx)
                 async with self._busy:
-                    await self.robot.cue("overtime")
+                    await self._cue("overtime")
                     await self._say(f"“{self.prep.agenda[idx].title}”这个议题超时了。")
             elif time.time() - self._last_off_check >= OFF_TOPIC_EVERY:
                 self._last_off_check = time.time()
@@ -174,22 +195,44 @@ class Orchestrator:
         if await self.brain.is_off_topic(self.prep.agenda, self.current_item, recent):
             self._off_topic_hits += 1
             if self._off_topic_hits == 1:
-                await self.robot.cue("off_topic_soft")
+                await self._cue("off_topic_soft")
             else:
                 async with self._busy:
-                    await self.robot.cue("off_topic_speak")
+                    await self._cue("off_topic_speak")
                     await self._say("这个要不要会后聊？")
                 self._off_topic_hits = 0
         else:
             self._off_topic_hits = 0
 
+    # ---------- 演示：自动灌 mock 会议记录 ----------
+    async def _drip_mock(self) -> None:
+        """只为让看板动起来：预先写好的记录一条条进转写，不走 match_command。"""
+        from brain.demo import mock_transcript_lines
+        for line in mock_transcript_lines():
+            await asyncio.sleep(MOCK_DRIP_SECONDS)
+            if self.state != "meeting":
+                return
+            self.transcript.append(Utterance(text=line, ts=time.time()))
+            await self._publish()
+
+    def _stop_drip(self) -> None:
+        if self._drip and not self._drip.done():
+            self._drip.cancel()
+        self._drip = None
+
     # ---------- 工具 ----------
+    async def _cue(self, name: str) -> None:
+        """包一层只为把最近一次 cue 记进快照，RobotIO 接口不变。"""
+        self.last_cue = name
+        await self.robot.cue(name)
+
     async def _say(self, text: str) -> None:
-        await self.robot.cue("speaking")
+        await self._cue("speaking")
         self.last_said = text
+        self.say_id += 1
         await self._publish()
         await self.speech.say(text)
-        await self.robot.cue("standby" if self.state == "idle" else "idle")
+        await self._cue("standby" if self.state == "idle" else "idle")
 
     def _context(self) -> Context:
         return Context(prep=self.prep, transcript=list(self.transcript),
@@ -223,6 +266,7 @@ class Orchestrator:
             "marks": self.marks, "last_answer": self.last_answer,
             "last_said": getattr(self, "last_said", ""),
             "minutes": to_dict(self.minutes) if self.minutes else None,
+            "cue": self.last_cue, "say_id": self.say_id, "demo": DEMO_MODE,
         }
 
     async def _publish(self) -> None:

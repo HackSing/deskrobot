@@ -112,7 +112,7 @@ LLM_MODEL=deepseek-flash
 LLM_EXTRA={"thinking":{"type":"disabled"},"max_tokens":400}
 ```
 
-LLM 用 DeepSeek 的 OpenAI 兼容端点，已实测可用。deepseek-flash 是推理模型，LLM_EXTRA 里关闭思考是必须的，否则推理内容会把 max_tokens 吃光、正文返回空串；关闭后一次问答约 1 秒。LLM_KEY 不填就自动用假大脑，问答退化为关键词匹配，其余流程照跑。
+.env 里写了的值优先于系统环境变量，开发机上别的项目留下的 LLM_MODEL 之类不会盖过它。LLM 用 DeepSeek 的 OpenAI 兼容端点，已实测可用。deepseek-flash 是推理模型，LLM_EXTRA 里关闭思考是必须的，否则推理内容会把 max_tokens 吃光、正文返回空串；关闭后一次问答约 1 秒。LLM_KEY 不填就自动用假大脑，问答退化为关键词匹配，其余流程照跑。
 
 ## 5. 联调步骤
 

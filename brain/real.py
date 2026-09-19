@@ -15,6 +15,9 @@ LLM_URL = os.environ.get("LLM_URL", "")
 LLM_KEY = os.environ.get("LLM_KEY", "")
 LLM_MODEL = os.environ.get("LLM_MODEL", "")
 SEARCH_EXTRA = json.loads(os.environ.get("LLM_SEARCH_EXTRA", "{}") or "{}")     # 例：{"enable_search": true}
+# 每次请求都带上的额外参数，JSON。推理模型必须关思考，否则思考内容吃光 max_tokens、content 返回空串。
+# 例：{"thinking": {"type": "disabled"}, "max_tokens": 400}
+LLM_EXTRA = json.loads(os.environ.get("LLM_EXTRA", "{}") or "{}")
 RECENT_KEEP_SECONDS = 15 * 60
 WEB_HINTS = ("查一下", "查查", "搜一下", "联网")
 
@@ -35,7 +38,8 @@ class RealBrain:
         self.http = httpx.AsyncClient(timeout=40)
 
     async def _chat(self, prompt: str, extra: dict | None = None) -> str:
-        body = {"model": LLM_MODEL, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, **(extra or {})}
+        body = {"model": LLM_MODEL, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2,
+                **LLM_EXTRA, **(extra or {})}
         r = await self.http.post(LLM_URL, headers={"Authorization": f"Bearer {LLM_KEY}"}, json=body)
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"]

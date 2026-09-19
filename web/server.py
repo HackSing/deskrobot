@@ -53,6 +53,11 @@ def build_app(orch) -> FastAPI:
     async def index():
         return FileResponse(STATIC / "index.html")
 
+    @app.get("/h5")
+    async def h5():
+        path = STATIC / "h5.html"
+        return FileResponse(path) if path.exists() else JSONResponse({"error": "h5.html 还没做"}, 404)
+
     @app.get("/api/state")
     async def state():
         return orch.snapshot()
