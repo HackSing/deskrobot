@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#16213A">
+<title>小登 · 会议</title>
+<style>
+/* 手机端 H5：单文件，无框架，无外网资源。视图完全由 /ws 快照驱动。 */
+:root{
+  --bg:#EDF1F6; --card:#fff; --ink:#16213A; --muted:#5B6780; --line:#D5DCE6;
+  --go:#2FA36B; --warn:#E8A623; --stop:#E0503C; --accent:#2F5BEA; --accent-soft:#E6ECFD;
+  --shadow:0 1px 3px rgba(22,33,58,.08),0 8px 24px rgba(22,33,58,.06);
+  --barh:46px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg);color:var(--ink);
+  font:18px/1.6 "PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+  padding:calc(var(--barh) + env(safe-area-inset-top)) 0 calc(20px + env(safe-area-inset-bottom));
+  -webkit-text-size-adjust:100%;
+}
+body.has-debug{padding-bottom:calc(84px + env(safe-area-inset-bottom))}
+
+/* ---- 顶部固定条 ---- */
+#bar{
+  position:fixed;top:0;left:0;right:0;z-index:50;height:calc(var(--barh) + env(safe-area-inset-top));
+  padding:env(safe-area-inset-top) 14px 0;
+  display:flex;align-items:center;gap:8px;
+  background:var(--ink);color:#fff;
+}
+#bar .brand{font-size:16px;font-weight:700;letter-spacing:.04em}
+#bar .stage{font-size:13px;opacity:.7;padding-left:8px;border-left:1px solid rgba(255,255,255,.25)}
+#conn{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:13px;opacity:.9}
+#conn i{width:9px;height:9px;border-radius:50%;background:var(--warn);display:block}
+#conn.ok i{background:#4BD08B}
+#conn.bad i{background:var(--stop);animation:blink 1s infinite}
+#conn.mock i{background:#9AA6BD}
+@keyframes blink{50%{opacity:.25}}
+
+/* ---- 布局 ---- */
+main{max-width:640px;margin:0 auto;padding:14px}
+.view{display:none}
+.view.on{display:block}
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:16px;
+  padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow);
+}
+h2{font-size:15px;margin:0 0 10px;color:var(--muted);font-weight:600;letter-spacing:.02em}
+.k{font-size:13px;color:var(--muted);margin-bottom:2px}
+.muted{color:var(--muted)}
+.empty{color:var(--muted);font-size:16px}
+ul{margin:0;padding-left:1.25em}
+li{margin:4px 0}
+.big{font-size:26px;font-weight:700;line-height:1.3}
+
+/* ---- 准备视图 ---- */
+.hint{
+  background:var(--accent-soft);border:1px solid #C6D3FA;border-radius:16px;
+  padding:16px;margin-bottom:12px;text-align:center;
+}
+.hint .say{font-size:24px;font-weight:700;margin-top:4px}
+.hint .lead{font-size:14px;color:var(--muted)}
+.btn{
+  display:block;width:100%;text-align:center;font:inherit;font-size:19px;font-weight:600;
+  padding:16px;border-radius:14px;border:0;background:var(--accent);color:#fff;cursor:pointer;
+}
+.btn:active{filter:brightness(.92)}
+input[type=file]{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
+.filelist{margin:12px 0 0;padding:0;list-style:none}
+.filelist li{
+  display:flex;gap:8px;align-items:baseline;font-size:16px;
+  padding:8px 10px;background:#F2F5FA;border-radius:10px;margin:6px 0;word-break:break-all;
+}
+.filelist li .tag{color:var(--go);font-size:13px;font-weight:700;flex:none}
+.matlist{margin:0;padding:0;list-style:none}
+.matlist li{
+  padding:9px 12px;background:#F2F5FA;border-radius:10px;margin:6px 0;
+  font-size:16px;word-break:break-all;
+}
+
+/* ---- 会中视图 ---- */
+.hero{padding:16px}
+.hero .proj{font-size:17px;font-weight:600;color:var(--muted)}
+.hero .topic{font-size:27px;font-weight:700;line-height:1.25;margin:2px 0 12px}
+.clockrow{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+.clock{font-size:42px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.slash,.total{font-size:20px;color:var(--muted);font-variant-numeric:tabular-nums}
+.idx{margin-left:auto;font-size:13px;color:var(--muted)}
+.bar{height:12px;border-radius:6px;background:#E2E7EF;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--go);border-radius:6px;transition:width .4s}
+#tsList{display:flex;flex-direction:column;gap:7px;max-height:34vh;min-height:96px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.ts{padding:8px 11px;border-radius:12px;background:#F2F5FA;font-size:17px;line-height:1.45;word-break:break-word}
+.ts.cmd{background:var(--accent-soft)}
+.ts time{display:block;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.said{font-size:19px;line-height:1.5}
+.qa .q{font-size:17px;font-weight:700}
+.qa .a{font-size:17px;margin-top:4px}
+.src{
+  display:inline-block;margin-top:8px;font-size:13px;font-weight:600;
+  padding:3px 10px;border-radius:999px;background:var(--accent-soft);color:#2A46B8;
+}
+
+/* ---- 纪要视图 ---- */
+.banner{
+  background:var(--go);color:#fff;border-radius:16px;padding:16px;margin-bottom:12px;
+  text-align:center;box-shadow:var(--shadow);
+}
+.banner .t{font-size:22px;font-weight:700}
+.banner .s{font-size:14px;opacity:.9;margin-top:2px}
+.todo{border:1px solid var(--line);border-radius:12px;padding:11px 12px;margin:8px 0;background:#FAFBFD}
+.todo .top{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.todo .owner{font-size:17px;font-weight:700}
+.todo .body{font-size:17px;line-height:1.5}
+.todo .due{font-size:14px;color:var(--muted);margin-top:4px}
+.badge{margin-left:auto;flex:none;font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px}
+.badge.ok{background:#DFF3E8;color:#1F7A4D}
+.badge.no{background:#FDF0D8;color:#8A6410}
+ol.list{margin:0;padding-left:1.3em;font-size:17px}
+ol.list li{margin:6px 0;line-height:1.5}
+
+/* ---- 调试条 ---- */
+#debug{
+  position:fixed;left:0;right:0;bottom:0;z-index:50;display:none;
+  padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+  background:rgba(255,255,255,.96);border-top:1px solid var(--line);
+  backdrop-filter:blur(6px);
+}
+#debug.on{display:block}
+#debug .row{display:flex;gap:8px;max-width:640px;margin:0 auto}
+#debug input{
+  flex:1;min-width:0;font:inherit;font-size:16px;padding:11px 12px;
+  border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);
+}
+#debug button{flex:none;font:inherit;font-size:17px;font-weight:700;padding:11px 20px;border:0;border-radius:12px;background:var(--ink);color:#fff}
+#dMsg{display:block;max-width:640px;margin:4px auto 0;font-size:12px;color:var(--muted);min-height:16px}
+
+@media (min-width:700px){
+  body{font-size:17px}
+  main{padding:20px}
+  #tsList{max-height:40vh}
+}
+</style>
+</head>
+<body>
+
+<header id="bar">
+  <span class="brand" id="brand">小登</span>
+  <span class="stage" id="stage">准备</span>
+  <span id="conn"><i></i><span id="connText">连接中</span></span>
+</header>
+
+<main>
+  <!-- ========== 准备 ========== -->
+  <section id="vPrep" class="view">
+    <div class="hint">
+      <div class="lead">会议还没开始</div>
+      <div class="say" id="pSay">对小登说：小登，开始会议</div>
+    </div>
+    <div class="card">
+      <div class="k">项目</div>
+      <div class="big" id="pProject">待定</div>
+    </div>
+    <div class="card">
+      <h2>会议资料</h2>
+      <label class="btn" for="pFile">上传会议资料</label>
+      <input type="file" id="pFile" multiple>
+      <ul class="filelist" id="pUploaded"></ul>
+    </div>
+    <div class="card">
+      <h2>已就绪的资料</h2>
+      <ul class="matlist" id="pMaterials"></ul>
+    </div>
+  </section>
+
+  <!-- ========== 会中 ========== -->
+  <section id="vMeet" class="view">
+    <div class="card hero">
+      <div class="proj" id="mProject">—</div>
+      <div class="topic" id="mTopic">—</div>
+      <div class="clockrow">
+        <span class="clock" id="mElapsed">00:00</span>
+        <span class="slash">/</span>
+        <span class="total" id="mTotal">00:00</span>
+        <span class="idx" id="mIdx"></span>
+      </div>
+      <div class="bar"><i id="mBar"></i></div>
+    </div>
+    <div class="card">
+      <h2>实时转写</h2>
+      <div id="tsList"></div>
+    </div>
+    <div class="card">
+      <h2 id="mSaidTitle">小登刚说</h2>
+      <div class="said" id="mSaid"></div>
+    </div>
+    <div class="card">
+      <h2>最近一次问答</h2>
+      <div class="qa" id="mQA"></div>
+    </div>
+    <div class="card">
+      <h2>已记重点</h2>
+      <div id="mMarks"></div>
+    </div>
+  </section>
+
+  <!-- ========== 纪要 ========== -->
+  <section id="vMin" class="view">
+    <div class="banner">
+      <div class="t">会议纪要已推送</div>
+      <div class="s" id="nProject">—</div>
+    </div>
+    <div class="card">
+      <h2>结论</h2>
+      <div id="nConclusions"></div>
+    </div>
+    <div class="card">
+      <h2>待办</h2>
+      <div id="nTodos"></div>
+    </div>
+    <div class="card">
+      <h2>未决问题</h2>
+      <div id="nOpen"></div>
+    </div>
+    <div class="card">
+      <h2>重点</h2>
+      <div id="nHighlights"></div>
+    </div>
+  </section>
+</main>
+
+<div id="debug">
+  <div class="row">
+    <input id="dText" placeholder="替机器人说一句，例：小登，开始会议" autocomplete="off">
+    <button id="dSay" type="button">说</button>
+  </div>
+  <span id="dMsg"></span>
+</div>
+
+<script>
+"use strict";
+var $ = function(id){ return document.getElementById(id); };
+
+/* ---------- 工具 ---------- */
+var ESC = {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"};
+function esc(t){ return String(t == null ? "" : t).replace(/[&<>"']/g, function(c){ return ESC[c]; }); }
+function mmss(sec){
+  var s = Math.max(0, Math.floor(Number(sec) || 0));
+  var m = Math.floor(s / 60);
+  return (m < 10 ? "0" : "") + m + ":" + (s % 60 < 10 ? "0" : "") + (s % 60);
+}
+function hhmm(ts){
+  var n = Number(ts);
+  if (!n || !isFinite(n)) return "";
+  var d = new Date(n < 1e11 ? n * 1000 : n);   // 后端是秒
+  if (isNaN(d.getTime())) return "";
+  return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+}
+function arr(v){ return Array.isArray(v) ? v : []; }
+function bullets(items, ordered){
+  var list = arr(items).filter(function(x){ return String(x == null ? "" : x).trim() !== ""; });
+  if (!list.length) return '<div class="empty">无</div>';
+  var tag = ordered ? "ol" : "ul";
+  return "<" + tag + ' class="list">' + list.map(function(x){ return "<li>" + esc(x) + "</li>"; }).join("") + "</" + tag + ">";
+}
+var SOURCE_LABEL = {
+  materials: "会议资料", transcript: "本场转写", history: "历史纪要", web: "联网", none: "没找到"
+};
+
+/* ---------- 样例快照（?mock=） ---------- */
+var NOW = Math.floor(Date.now() / 1000);
+var MOCKS = {
+  prep: {
+    state: "idle", robot_name: "小登", project: "供应商报价",
+    agenda: [{ title: "对比三家供应商", minutes: 6 }, { title: "定下一步动作", minutes: 4 }],
+    current_item: 0, elapsed: 0, total: 600,
+    materials: ["A家报价单.pdf", "B家报价单.pdf", "C家技术方案.docx"],
+    transcript: [], marks: [], last_answer: null, last_said: "", minutes: null
+  },
+  meeting: {
+    state: "meeting", robot_name: "小登", project: "供应商报价",
+    agenda: [{ title: "对比三家供应商", minutes: 6 }, { title: "定下一步动作", minutes: 4 }],
+    current_item: 0, elapsed: 215, total: 600,
+    materials: ["A家报价单.pdf", "B家报价单.pdf", "C家技术方案.docx"],
+    transcript: [
+      { text: "张三：先看价格，A 家单价 12 块 8。", ts: NOW - 240 },
+      { text: "李四：B 家最便宜，11 块 2，但起订量要五千。", ts: NOW - 200 },
+      { text: "王五：我们一年也用不到五千。", ts: NOW - 170 },
+      { text: "小登，记下这个重点：B 家因起订量排除", ts: NOW - 150 },
+      { text: "张三：那就剩 A 家和 C 家了。", ts: NOW - 90 },
+      { text: "李四：小登，资料里 A 家和 C 家的交期分别是多少？", ts: NOW - 60 },
+      { text: "王五：交期对九月那批货挺关键的。", ts: NOW - 20 }
+    ],
+    marks: ["B 家因起订量五千被排除", "九月批次交期是硬约束"],
+    last_answer: {
+      question: "资料里 A 家和 C 家的交期分别是多少",
+      text: "A 家交期 45 天，C 家 30 天。C 家另附一条：单批超过两千件时交期延长到 40 天。",
+      source: "materials"
+    },
+    last_said: "A 家交期 45 天，C 家 30 天。来源：会议资料。",
+    minutes: null
+  },
+  ended: {
+    state: "idle", robot_name: "小登", project: "供应商报价",
+    agenda: [{ title: "对比三家供应商", minutes: 6 }, { title: "定下一步动作", minutes: 4 }],
+    current_item: 1, elapsed: 0, total: 600,
+    materials: ["A家报价单.pdf", "B家报价单.pdf", "C家技术方案.docx"],
+    transcript: [], marks: ["B 家因起订量五千被排除", "九月批次交期是硬约束"],
+    last_answer: null, last_said: "3 条结论，3 条待办，已保存。",
+    minutes: {
+      conclusions: ["B 家因起订量五千被排除", "优先谈 A 家，C 家作为备选", "九月批次以交期为第一优先"],
+      todos: [
+        { owner: "张三", content: "向 A 家要正式报价单和交期承诺", due: "周五前", confirmed: true },
+        { owner: "李四", content: "核算 C 家 30 天交期下的库存占用", due: "下周三", confirmed: true },
+        { owner: "王五", content: "确认 C 家芯片供应是否稳定", due: "本月底", confirmed: false }
+      ],
+      open_questions: ["C 家用的那颗芯片是否已经停产", "A 家能不能把 45 天交期压到 35 天"],
+      highlights: ["B 家因起订量五千被排除", "九月批次交期是硬约束"]
+    }
+  }
+};
+
+/* ---------- 运行模式 ---------- */
+var params = new URLSearchParams(location.search);
+var DEBUG = params.get("debug") === "1";
+var MOCK = params.get("mock");
+if (MOCK && !MOCKS[MOCK]) MOCK = null;
+
+/* ---------- 渲染 ---------- */
+var snap = null, snapAt = 0;
+var fakeUploads = [];
+
+function hasMinutes(m){
+  if (!m || typeof m !== "object") return false;
+  return arr(m.conclusions).length > 0 || arr(m.todos).length > 0 ||
+         arr(m.open_questions).length > 0 || arr(m.highlights).length > 0;
+}
+function viewOf(s){
+  if (!s) return "prep";
+  if (s.state === "meeting" || s.state === "confirming") return "meeting";
+  if (hasMinutes(s.minutes)) return "minutes";
+  return "prep";
+}
+var STAGE_TEXT = { prep: "准备", meeting: "会中", minutes: "纪要" };
+
+function apply(s){
+  if (!s || typeof s !== "object") return;
+  snap = s;
+  snapAt = Date.now();
+  render();
+}
+
+function liveElapsed(){
+  if (!snap) return 0;
+  var base = Number(snap.elapsed) || 0;
+  if (MOCK) return base;
+  if (snap.state !== "meeting" && snap.state !== "confirming") return base;
+  return base + Math.max(0, (Date.now() - snapAt) / 1000);
+}
+
+function render(){
+  var s = snap || {};
+  var v = viewOf(snap);
+
+  $("brand").textContent = s.robot_name || "小登";
+  $("stage").textContent = STAGE_TEXT[v] || "准备";
+  $("vPrep").classList.toggle("on", v === "prep");
+  $("vMeet").classList.toggle("on", v === "meeting");
+  $("vMin").classList.toggle("on", v === "minutes");
+
+  if (v === "prep") renderPrep(s);
+  else if (v === "meeting") renderMeeting(s);
+  else renderMinutes(s);
+}
+
+function renderPrep(s){
+  var name = s.robot_name || "小登";
+  $("pSay").textContent = "对" + name + "说：" + name + "，开始会议";
+  $("pProject").textContent = s.project || "待定";
+
+  $("pUploaded").innerHTML = fakeUploads.map(function(n){
+    return '<li><span class="tag">已上传</span><span>' + esc(n) + "</span></li>";
+  }).join("");
+
+  var mats = arr(s.materials);
+  $("pMaterials").innerHTML = mats.length
+    ? mats.map(function(m){ return "<li>" + esc(m) + "</li>"; }).join("")
+    : '<li class="empty">后台还没有预置资料</li>';
+}
+
+function renderClock(){
+  var s = snap || {};
+  var el = liveElapsed();
+  var total = Number(s.total) || 0;
+  $("mElapsed").textContent = mmss(el);
+  $("mTotal").textContent = mmss(total);
+  var r = total > 0 ? el / total : 0;
+  var bar = $("mBar");
+  bar.style.width = Math.min(Math.max(r, 0), 1) * 100 + "%";
+  bar.style.background = r >= 1 ? "var(--stop)" : (r >= 0.8 ? "var(--warn)" : "var(--go)");
+}
+
+function renderMeeting(s){
+  var name = s.robot_name || "小登";
+  $("mProject").textContent = s.project || "本场会议";
+
+  var agenda = arr(s.agenda);
+  var i = Number(s.current_item) || 0;
+  var item = (i >= 0 && i < agenda.length) ? agenda[i] : null;
+  $("mTopic").textContent = item && item.title ? item.title : "自由讨论";
+  $("mIdx").textContent = agenda.length ? "议题 " + (Math.min(i, agenda.length - 1) + 1) + " / " + agenda.length : "";
+  renderClock();
+
+  var lines = arr(s.transcript).slice(-6);
+  var box = $("tsList");
+  box.innerHTML = lines.length
+    ? lines.map(function(u){
+        var text = u && u.text != null ? String(u.text) : "";
+        var isCmd = name && text.indexOf(name) !== -1;
+        var t = u ? hhmm(u.ts) : "";
+        return '<div class="ts' + (isCmd ? " cmd" : "") + '">' +
+               (t ? "<time>" + esc(t) + "</time>" : "") + esc(text) + "</div>";
+      }).join("")
+    : '<div class="empty">还没有人说话</div>';
+  box.scrollTop = box.scrollHeight;
+
+  $("mSaidTitle").textContent = name + "刚说";
+  var said = s.last_said ? String(s.last_said) : "";
+  $("mSaid").innerHTML = said ? esc(said) : '<span class="empty">（还没说话）</span>';
+
+  var a = s.last_answer;
+  $("mQA").innerHTML = (a && typeof a === "object")
+    ? '<div class="q">' + esc(a.question || "") + "</div>" +
+      '<div class="a">' + esc(a.text || "") + "</div>" +
+      '<span class="src">来源：' + esc(SOURCE_LABEL[a.source] || a.source || "未知") + "</span>"
+    : '<div class="empty">（还没人提问）</div>';
+
+  $("mMarks").innerHTML = bullets(s.marks, true);
+}
+
+function renderMinutes(s){
+  var m = s.minutes || {};
+  $("nProject").textContent = s.project || "本场会议";
+  $("nConclusions").innerHTML = bullets(m.conclusions, true);
+  $("nOpen").innerHTML = bullets(m.open_questions, false);
+  $("nHighlights").innerHTML = bullets(m.highlights, false);
+
+  var todos = arr(m.todos);
+  $("nTodos").innerHTML = todos.length
+    ? todos.map(function(t){
+        t = t || {};
+        var ok = !!t.confirmed;
+        return '<div class="todo"><div class="top">' +
+               '<span class="owner">' + esc(t.owner || "未指派") + "</span>" +
+               '<span class="badge ' + (ok ? "ok" : "no") + '">' + (ok ? "已确认" : "待确认") + "</span>" +
+               "</div>" +
+               '<div class="body">' + esc(t.content || "") + "</div>" +
+               (t.due ? '<div class="due">期限：' + esc(t.due) + "</div>" : "") +
+               "</div>";
+      }).join("")
+    : '<div class="empty">无</div>';
+}
+
+/* ---------- 假上传：只显示文件名，不发请求 ---------- */
+$("pFile").addEventListener("change", function(e){
+  var files = e.target.files || [];
+  for (var i = 0; i < files.length; i++) {
+    if (fakeUploads.indexOf(files[i].name) === -1) fakeUploads.push(files[i].name);
+  }
+  e.target.value = "";
+  render();
+});
+
+/* ---------- 连接状态 ---------- */
+function setConn(cls, text){
+  var el = $("conn");
+  el.className = cls;
+  $("connText").textContent = text;
+}
+
+/* ---------- 数据源 ---------- */
+function connect(){
+  var ws;
+  try {
+    ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  } catch (err) {
+    setConn("bad", "重连中");
+    setTimeout(connect, 1000);
+    return;
+  }
+  ws.onopen = function(){ setConn("ok", "已连接"); };
+  ws.onmessage = function(e){
+    try { apply(JSON.parse(e.data)); } catch (err) { /* 坏包忽略 */ }
+  };
+  ws.onclose = function(){ setConn("bad", "重连中"); setTimeout(connect, 1000); };
+  ws.onerror = function(){ try { ws.close(); } catch (err) {} };
+}
+
+function pullOnce(){
+  fetch("/api/state", { cache: "no-store" })
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(j){ if (j) apply(j); })
+    .catch(function(){ /* WS 会补上 */ });
+}
+
+/* ---------- 调试条 ---------- */
+if (DEBUG) {
+  document.body.classList.add("has-debug");
+  $("debug").classList.add("on");
+  var sendSay = function(){
+    var t = $("dText").value.trim();
+    if (!t) return;
+    $("dText").value = "";
+    $("dMsg").textContent = "发送中…";
+    fetch("/api/debug/say", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: t })
+    }).then(function(r){ $("dMsg").textContent = r.ok ? "已发送：" + t : "发送失败 " + r.status; })
+      .catch(function(){ $("dMsg").textContent = "发送失败，后端没连上"; });
+  };
+  $("dSay").addEventListener("click", sendSay);
+  $("dText").addEventListener("keydown", function(e){ if (e.key === "Enter") sendSay(); });
+}
+
+/* ---------- 启动 ---------- */
+if (MOCK) {
+  setConn("mock", "样例 " + MOCK);
+  apply(MOCKS[MOCK]);
+} else {
+  setConn("", "连接中");
+  render();
+  pullOnce();
+  connect();
+  setInterval(function(){
+    if (snap && (snap.state === "meeting" || snap.state === "confirming")) renderClock();
+  }, 1000);
+}
+</script>
+</body>
+</html>
