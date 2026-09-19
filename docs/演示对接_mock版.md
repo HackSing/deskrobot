@@ -45,9 +45,17 @@
 
 ## 3. H5 需要的
 
-页面地址 `http://局域网IP:8766/h5`，后端启动时会把地址打印在终端，用任意二维码工具生成二维码即可，不依赖代码。
+**对接模型已改为后端主动推送。** H5 由对方自建，后端把数据 POST 到对方指定的接口。对方要给后端三样东西：接收地址、鉴权方式（有就给 token）、想要的字段名。后端在 `.env` 里配 `H5_PUSH_URL` 和 `H5_PUSH_TOKEN`，字段映射集中在 `core/push.py` 的 `adapt` 函数里改。
 
-数据只有一条快照。`ws://IP:8766/ws` 连上先收一条完整快照，之后每次变化都收一条完整快照，不是增量。刷新用 `GET /api/state`。不新增任何接口。
+后端每次状态变化都推一次，载荷固定三层：
+
+```json
+{"event": "meeting_started", "ts": 1789805547.1, "data": { 快照，字段见下表 }}
+```
+
+`event` 五种：`meeting_started` 会议开始、`transcript` 转写有新行、`answer` 有新问答、`meeting_ended` 会议结束且 data.minutes 非空、`snapshot` 其他变化。前四种保证逐条送达，`snapshot` 和 `transcript` 在推送拥塞时只保留最新一份。对方只需按 event 分派：started 切会中，transcript 和 answer 刷新看板，ended 切纪要页。
+
+对方如果不想接推送，保底是拉取：页面地址 `http://局域网IP:8766/h5`，`ws://IP:8766/ws` 连上先收一条完整快照，之后每次变化都收一条完整快照，不是增量，刷新用 `GET /api/state`。仓库里 `web/static/h5.html` 是一版能跑的手机页面，可以直接用也可以不用。
 
 **视图规则**，页面不维护流程状态
 
