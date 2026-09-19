@@ -1,7 +1,7 @@
 # 会议主持机器人
 
 放在会议室里的主持人：会前读资料，会中转写、计时、管跑题，被叫到名字才回答，散会前拍背确认待办，下次开场先追上次的待办。
-产品形式：Web 看板（局域网）加 WatcheRobot 桌面机器人。背景见 `docs/产品文档.md`，直观印象打开 `docs/产品蓝图.html`。
+产品形式：Web 看板（局域网）加 WatcheRobot 桌面机器人。背景见 `docs/会议主持机器人_产品文档.md`，直观印象打开 `docs/会议主持机器人_产品蓝图.html`。
 
 ## 现在就能跑（不需要机器人和任何 key）
 
@@ -30,12 +30,15 @@ watcherobot app run .
 
 ## 分工
 
-| 人 | 目录 | 要做的 |
+三个人。任务清单、优先级、H5 扫码加入的设计、机器人排班和里程碑见 `docs/分工方案.md`。
+
+| 人 | 目录 | 高优先级 |
 | --- | --- | --- |
-| A 集成 | `core/` `robot_io/` `main.py` `app.py` `contracts.py` | 状态机调优，`robot_io/cues.py` 对照真机核对行为 ID 和灯效，拿着机器人联调 |
-| B 语音 | `speech/` | `providers.py` 接 ASR 和 TTS，`segmenter.py` 调阈值，`commands.py` 补指令说法 |
-| C 大脑 | `brain/` | `.env` 配 LLM，`prompts.py` 调提示词，联网搜索参数，长转写压缩 |
-| D 页面和演示 | `web/static/` `demo/` | 三个页面做好看，二维码，演示资料和台词，彩排 |
+| P1 集成 + 机器人 | `core/` `robot_io/` `main.py` `app.py` `app.json` `contracts.py` `requirements.txt` | 真机核对 `robot_io/cues.py` 的行为 ID 和灯效；守门人（合并、依赖、契约）；状态机调参；定验收标准 |
+| P2 语音 | `speech/` | `providers.py` 先接云端 TTS 再接云端 ASR；`segmenter.py` 真机调阈值；回声；`commands.py` 补说法。全部要做 |
+| P3 大脑 + H5 页面 | `brain/` `web/` `demo/` | `.env` 配 LLM 并调稳；H5 页面：发起人发起后生成二维码，参会人扫码加入，发起人上传资料，散会后纪要推送到每个人手机。除演示外全部要做 |
+
+演示彩排全员承担，P1 牵头。
 
 ## 数据流
 
