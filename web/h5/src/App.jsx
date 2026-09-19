@@ -46,6 +46,15 @@ const defaultDecisions = [
 const defaultSummary =
   '重点回顾了上周的开发进展与数据表现，讨论了新功能的上线计划和市场推广方案。整体进展符合预期，但需要在用户反馈优化和性能稳定性方面继续投入。团队对下阶段的工作重点达成一致。';
 
+// 首页会前表单的初值。后端连上后由 /api/state 里的会前准备覆盖（见 applyPrep），
+// 这里写的是后端演示模式预置的同一份数据（仓库 demo/seed.py），后端连不上时页面也是这一套。
+const DEFAULT_PREP = {
+  name: '供应商报价',
+  agenda: '1. 对比三家供应商\n2. 定下一步动作',
+  duration: 20,
+  files: ['演示资料_供应商对比表.md']
+};
+
 const backendLabel = { ok: '已连接机器人后端 · 会议结束后自动显示纪要', poll: '机器人后端轮询中', off: '未连接机器人后端 · 模拟数据' };
 
 const labels = ['会前准备', '会中主持', '会中助手', '会后确认与追踪'];
@@ -86,12 +95,12 @@ function VideoWindow({ participant, isSpeaking, isMuted }) {
 
 export default function App() {
   const [page, P] = useState(0);
-  const [name, N] = useState('产品周会');
-  const [agenda, A] = useState('1. 回顾上周重点进展\n2. 对齐本周工作计划\n3. 讨论当前的关键问题\n4. 明确下一步行动项');
-  const [duration, D] = useState(30);
+  const [name, N] = useState(DEFAULT_PREP.name);
+  const [agenda, A] = useState(DEFAULT_PREP.agenda);
+  const [duration, D] = useState(DEFAULT_PREP.duration);
   const [speakingParticipant, SP] = useState(0); // 当前发言者
   const [customDuration, CD] = useState('');
-  const [files, F] = useState(['产品周报_2026-09-19.pdf']);
+  const [files, F] = useState([...DEFAULT_PREP.files]);
   const [running, R] = useState(false);
   const [seconds, S] = useState(0);
   const [topic, T] = useState(1);
@@ -133,6 +142,9 @@ export default function App() {
   const [openQuestions, OQ] = useState([]);
   const [backend, BK] = useState('off'); // ok / poll / off
   const appliedMinutes = useRef('');
+  const prefilled = useRef(null);            // 上一次由后端会前准备填进表单的那份值，用来判断用户有没有自己改过
+  const restoredFromStorage = useRef(false); // 用户选了“继续上次会议”，此后不再跟随后端会前准备
+  const formNow = useRef({ page: 0, running: false, name: DEFAULT_PREP.name, agenda: DEFAULT_PREP.agenda, duration: DEFAULT_PREP.duration, files: [...DEFAULT_PREP.files] });
 
   const transcriptSimulator = useRef(null);
 
@@ -205,10 +217,11 @@ export default function App() {
   useEffect(() => {
     const saved = loadMeetingData();
     if (saved && window.confirm('检测到上次未完成的会议，是否继续？')) {
+      restoredFromStorage.current = true; // 恢复出来的是用户自己的会议，别再被后端会前准备覆盖
       P(saved.page || 0);
-      N(saved.name || '产品周会');
+      N(saved.name || DEFAULT_PREP.name);
       A(saved.agenda || agenda);
-      D(saved.duration || 30);
+      D(saved.duration || DEFAULT_PREP.duration);
       F(saved.files || []);
       S(saved.seconds || 0);
       U(saved.tasks || initialTasks);
@@ -222,17 +235,56 @@ export default function App() {
     }
   }, []);
 
+  // 订阅回调是挂载时建的闭包，读不到最新 state，首页表单的当前值放 ref 里给 applyPrep 用。
+  useEffect(() => {
+    formNow.current = { page, running, name, agenda, duration, files };
+  });
+
   // 订阅后端快照。state 回到 idle 且 minutes 非空 = 会议已结束、纪要出来了：切到会后页显示真纪要。
   // 同一份纪要只应用一次；后端重启开新会后 meeting_id 变了会再次应用。
   useEffect(() => {
     return connectBackend(snap => {
-      if (!snap || snap.state !== 'idle' || !snap.minutes) return;
+      if (!snap) return;
+      applyPrep(snap);
+      if (snap.state !== 'idle' || !snap.minutes) return;
       const key = (snap.meeting_id || '') + JSON.stringify(snap.minutes);
       if (appliedMinutes.current === key) return;
       appliedMinutes.current = key;
       applyMinutes(snap);
     }, BK);
   }, []);
+
+  // 后端快照的会前准备（project / agenda / total / materials）→ 首页表单。
+  // 后端 /api/state 是会前准备的权威来源，页面只在还没开会、用户也没改过表单时跟着它走：
+  // 一旦当前值和上次填进去的那份对不上（= 用户自己编辑过），就再也不覆盖。
+  function applyPrep(snap) {
+    const cur = formNow.current;
+    if (cur.page !== 0 || cur.running || restoredFromStorage.current) return;
+    if (!snap.project || snap.minutes) return; // 纪要已出的快照交给 applyMinutes
+    const base = prefilled.current || DEFAULT_PREP;
+    const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+    if (cur.name !== base.name || cur.agenda !== base.agenda || cur.duration !== base.duration || !same(cur.files, base.files)) {
+      return;
+    }
+    const next = {
+      name: snap.project,
+      agenda: snap.agenda && snap.agenda.length
+        ? snap.agenda.map((a, i) => `${i + 1}. ${a.title}`).join(String.fromCharCode(10))
+        : cur.agenda,
+      duration: snap.total ? Math.max(1, Math.round(snap.total / 60)) : cur.duration,
+      files: snap.materials || []
+    };
+    // WebSocket 每次后端状态变化都推一份完整快照，会前准备没变就别白白重渲染。
+    if (next.name === cur.name && next.agenda === cur.agenda && next.duration === cur.duration && same(next.files, cur.files)) {
+      prefilled.current = next;
+      return;
+    }
+    prefilled.current = next;
+    N(next.name);
+    A(next.agenda);
+    D(next.duration);
+    F(next.files);
+  }
 
   // 后端快照 → 页面状态。字段对照见仓库 docs/前端对接_纪要推送.md
   function applyMinutes(snap) {
@@ -777,11 +829,14 @@ export default function App() {
                           }
                         }}
                       >
-                        {[5, 15, 30, 45, 60, 90, 120].map(v => (
-                          <option key={v} value={v}>
-                            {v} 分钟
-                          </option>
-                        ))}
+                        {/* 后端议程加起来可能不是预设档位（演示数据是 20 分钟），补一档进去免得选框空着 */}
+                        {[...new Set([5, 15, 30, 45, 60, 90, 120, duration].filter(v => v > 0))]
+                          .sort((a, b) => a - b)
+                          .map(v => (
+                            <option key={v} value={v}>
+                              {v} 分钟
+                            </option>
+                          ))}
                         <option value={0}>自定义</option>
                       </select>
                       {duration === 0 && (
