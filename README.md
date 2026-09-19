@@ -30,15 +30,15 @@ watcherobot app run .
 
 ## 分工
 
-三个人。任务清单、优先级、H5 扫码加入的设计、机器人排班和里程碑见 `docs/分工方案.md`。
+三块。任务清单、每个功能的框架、机器人排班和里程碑见 `docs/分工方案.md`；H5 的字段和接口见 `docs/接口说明.md`。
 
-| 人 | 目录 | 高优先级 |
+| 块 | 目录 | 要做的 |
 | --- | --- | --- |
-| P1 集成 + 机器人 | `core/` `robot_io/` `main.py` `app.py` `app.json` `contracts.py` `requirements.txt` | 真机核对 `robot_io/cues.py` 的行为 ID 和灯效；守门人（合并、依赖、契约）；状态机调参；定验收标准 |
-| P2 语音 | `speech/` | `providers.py` 先接云端 TTS 再接云端 ASR；`segmenter.py` 真机调阈值；回声；`commands.py` 补说法。全部要做 |
-| P3 大脑 + H5 页面 | `brain/` `web/` `demo/` | `.env` 配 LLM 并调稳；H5 页面：发起人发起后生成二维码，参会人扫码加入，发起人上传资料，散会后纪要推送到每个人手机。除演示外全部要做 |
+| 硬件侧：语音、动效、硬件输入输出 | `speech/` `robot_io/` | 开始和结束的唤醒词"小登"，会中持续录音，播报中被打断；`providers.py` 先接云端 TTS 再接 ASR，`segmenter.py` 真机调阈值，`cues.py` 真机核对行为 ID 和灯效 |
+| 大脑 | `core/` `brain/` `contracts.py` `main.py` `app.py` `web/server.py` | 状态机、意图识别、带记忆和联网的问答、跑题、纪要与待办确认、打断处理、房间接口与快照推送；守门人 |
+| 前端 H5 | `web/static/` | 发起人页、参与人页；发起后出二维码，扫码加入，上传资料，会中看板，散会后纪要推到每个人手机 |
 
-演示彩排全员承担，P1 牵头。
+演示彩排全员承担，大脑牵头。
 
 ## 数据流
 
