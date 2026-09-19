@@ -48,6 +48,9 @@ def lan_ip() -> str:
 
 def build_app(orch) -> FastAPI:
     app = FastAPI(title="会议主持机器人")
+    # 对方 H5 从自己的开发服务器直接 fetch 我们的 /api/* 时需要跨域放行；局域网演示，全部放开
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
     @app.get("/")
     async def index():
