@@ -1,0 +1,6 @@
+.venv/
+sdk-repo/
+__pycache__/
+*.py[cod]
+.DS_Store
+artifacts/
