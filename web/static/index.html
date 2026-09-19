@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>会议主持机器人</title>
+<style>
+/* D：这是能用的最小页面，样式和布局随便改。接口见 web/server.py 和 docs/接口说明.md */
+:root{--bg:#E9EEF3;--card:#fff;--ink:#16213A;--muted:#5B6780;--line:#CBD4E0;--go:#2FA36B;--warn:#E8A623;--stop:#E0503C;--accent:#2F5BEA}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+header{display:flex;gap:8px;align-items:center;padding:12px 20px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+header h1{font-size:18px;margin:0 auto 0 0}
+nav button,button.act{font:inherit;padding:6px 14px;border-radius:999px;border:1px solid var(--line);background:var(--card);cursor:pointer}
+nav button[aria-current=true]{background:var(--ink);color:#fff}button.act{background:var(--accent);color:#fff;border:0}
+main{max-width:1100px;margin:0 auto;padding:20px;display:none}main.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:2fr 1fr;gap:16px}@media(max-width:800px){.grid{grid-template-columns:1fr}}
+h2{font-size:16px;margin:0 0 10px}label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+input,textarea{width:100%;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:10px}
+.bar{height:12px;border-radius:6px;background:var(--line);overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--go)}
+#transcript{max-height:46vh;overflow:auto;display:flex;flex-direction:column;gap:6px}
+#transcript div.cmd{background:#E3EAFD;border-radius:8px;padding:0 8px}
+.muted{color:var(--muted);font-size:14px}.row{display:flex;gap:8px}.row>*{flex:1}
+ul{margin:0;padding-left:1.2em}.big{font-size:22px;font-weight:700}
+</style></head><body>
+<header><h1>会议主持机器人</h1>
+<nav><button data-tab="prep">会前准备</button><button data-tab="live" aria-current="true">会中看板</button><button data-tab="after">会后纪要</button></nav></header>
+
+<main id="prep">
+  <div class="card"><h2>准备一场会议</h2>
+    <label>项目</label><input id="pProject" placeholder="供应商报价">
+    <label>议程，每行一个：标题，分钟数</label><textarea id="pAgenda" rows="3" placeholder="对比三家供应商，6&#10;定下一步动作，4"></textarea>
+    <label>参会人，用顿号或逗号分开</label><input id="pPeople" placeholder="张三、李四、王五">
+    <label>会议背景</label><textarea id="pBg" rows="3"></textarea>
+    <p><button class="act" id="pSave">保存会议准备</button> <span class="muted" id="pMsg"></span></p>
+  </div>
+  <div class="card"><h2>会议资料</h2><p class="muted">先保存上面的准备，再上传。支持 PDF、Word、Markdown、文本。</p>
+    <input type="file" id="pFile" multiple><ul id="pFiles"></ul></div>
+</main>
+
+<main id="live" class="on">
+  <div class="card"><div class="row"><div><span class="muted">项目</span><div class="big" id="lProject">未开始</div></div>
+    <div><span class="muted">当前议题</span><div class="big" id="lItem">无</div></div>
+    <div><span class="muted">时间</span><div class="big" id="lClock">0:00</div></div></div>
+    <div class="bar" style="margin-top:10px"><i id="lBar"></i></div></div>
+  <div class="grid">
+    <div class="card"><h2>实时转写</h2><div id="transcript"></div></div>
+    <div><div class="card"><h2>机器人刚说的</h2><div id="lSaid" class="muted">（还没说话）</div></div>
+      <div class="card"><h2>最近一次问答</h2><div id="lAnswer" class="muted">（还没人问）</div></div>
+      <div class="card"><h2>已记重点</h2><ul id="lMarks"></ul></div>
+      <div class="card"><h2>资料</h2><ul id="lMaterials"></ul></div></div>
+  </div>
+  <div class="card"><h2>调试和演示备份</h2><div class="row"><input id="dText" placeholder="模拟说一句话，例：主持人，开始报价项目的会议">
+    <button class="act" id="dSay" style="flex:none">说</button><button class="act" id="dTouch" style="flex:none">拍背</button></div></div>
+</main>
+
+<main id="after"><div class="card"><h2>最近一场会议的纪要</h2><div id="aBody" class="muted">还没有纪要</div></div></main>
+
+<script>
+const $=id=>document.getElementById(id), api=(u,o)=>fetch(u,o).then(r=>r.json());
+const fmt=s=>Math.floor(s/60)+":"+String(Math.floor(s%60)).padStart(2,"0");
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("nav button").forEach(x=>x.setAttribute("aria-current",x===b));
+  document.querySelectorAll("main").forEach(m=>m.classList.toggle("on",m.id===b.dataset.tab));
+  if(b.dataset.tab==="after")loadMinutes();});
+
+// 会中看板
+function render(s){
+  $("lProject").textContent=s.project||"未开始";
+  $("lItem").textContent=s.agenda.length?s.agenda[s.current_item].title:"无";
+  $("lClock").textContent=fmt(s.elapsed)+" / "+fmt(s.total);
+  const r=s.total?s.elapsed/s.total:0;$("lBar").style.width=Math.min(r,1)*100+"%";
+  $("lBar").style.background=r>=1?"var(--stop)":r>=.5?"var(--warn)":"var(--go)";
+  $("transcript").innerHTML=s.transcript.map(u=>`<div class="${u.text.includes(s.robot_name)?"cmd":""}">${esc(u.text)}</div>`).join("");
+  $("transcript").scrollTop=1e9;
+  $("lSaid").textContent=s.last_said||"（还没说话）";
+  $("lAnswer").innerHTML=s.last_answer?`<b>${esc(s.last_answer.question)}</b><br>${esc(s.last_answer.text)}<br><span class="muted">来源：${s.last_answer.source}</span>`:"（还没人问）";
+  $("lMarks").innerHTML=s.marks.map(m=>`<li>${esc(m)}</li>`).join("");
+  $("lMaterials").innerHTML=s.materials.map(m=>`<li>${esc(m)}</li>`).join("");
+}
+const esc=t=>String(t).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function connect(){const ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws");
+  ws.onmessage=e=>render(JSON.parse(e.data));ws.onclose=()=>setTimeout(connect,1000);}
+connect();
+const post=(u,b)=>api(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})});
+$("dSay").onclick=()=>{if($("dText").value.trim()){post("/api/debug/say",{text:$("dText").value});$("dText").value="";}};
+$("dText").onkeydown=e=>{if(e.key==="Enter")$("dSay").click();};
+$("dTouch").onclick=()=>post("/api/debug/touch");
+
+// 会前准备
+$("pSave").onclick=async()=>{
+  const agenda=$("pAgenda").value.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{const p=l.split(/[，,]/);return{title:p[0].trim(),minutes:parseFloat(p[1])||5};});
+  const body={project:$("pProject").value.trim(),agenda,participants:$("pPeople").value.split(/[、，,\s]+/).filter(Boolean),background:$("pBg").value};
+  if(!body.project){$("pMsg").textContent="先填项目名";return;}
+  await post("/api/prep",body);$("pMsg").textContent="已保存";};
+$("pFile").onchange=async e=>{const project=$("pProject").value.trim();
+  for(const f of e.target.files){const fd=new FormData();fd.append("file",f);
+    const r=await api("/api/materials/"+encodeURIComponent(project),{method:"POST",body:fd});
+    $("pFiles").insertAdjacentHTML("beforeend",`<li>${esc(f.name)}：${r.ok?"已读取 "+r.chars+" 字":esc(r.error)}</li>`);}};
+
+// 会后纪要
+async function loadMinutes(){const m=await api("/api/minutes/latest");if(!m.meeting_id)return;
+  const li=a=>(a||[]).map(x=>`<li>${esc(x)}</li>`).join("")||"<li class=muted>无</li>";
+  $("aBody").innerHTML=`<p><b>${esc(m.project)}</b> <span class="muted">${esc(m.meeting_id)}</span></p><h2>结论</h2><ul>${li(m.conclusions)}</ul>
+  <h2>待办</h2><ul>${(m.todos||[]).map(t=>`<li>${esc(t.owner)}：${esc(t.due)}${esc(t.content)} ${t.confirmed?"（已拍背确认）":"（未确认）"}</li>`).join("")||"<li class=muted>无</li>"}</ul>
+  <h2>未决问题</h2><ul>${li(m.open_questions)}</ul><h2>重点</h2><ul>${li(m.highlights)}</ul>`;}
+</script></body></html>
