@@ -1,47 +1,36 @@
-"""真语音链路：机器人麦克风 -> 切句 -> ASR -> 回调；TTS -> 机器人扬声器。B 负责。"""
-from __future__ import annotations
-import asyncio
-import time
+"""真语音链路：机器人 WebRTC 全双工音频 -> 切句 -> ASR -> 回调；TTS -> 全双工音轨。B 负责。
 
-from contracts import OnUtterance, Utterance
-from speech import providers
-from speech.segmenter import Segmenter
+不用 ``robot.microphone``/``robot.audio.play_pcm``：真机反复验证过，麦克风关闭后
+紧接着开扬声器流会让固件 DMA 碎片化，``ctrl.audio.stream.begin`` 持续
+no_capacity/invalid_state，重试几十秒不自愈，只能断电重启机器人。WebRTC 全双工
+（``rtc.audio.full_duplex.v1``）走独立的设备音频管线，不受这个问题影响，已用
+SDK 自带的 sdk_media_lab 测试台验证可用。实际的信令中转、音频编解码和 ASR/TTS
+调用都在 ``speech/rtc_bridge.py`` 里；这个文件只是薄薄一层，把 SpeechIO 契约接
+到桥接模块上。
+"""
+from __future__ import annotations
+
+from contracts import OnUtterance
+from speech.rtc_bridge import RtcBridge
 
 
 class RealSpeech:
-    def __init__(self, robot) -> None:            # robot = ApplicationContext.robot
-        self.robot = robot
-        self._speaking = False
+    def __init__(self, app_ctx) -> None:      # app_ctx = ApplicationContext（要用到 .rtc）
+        self.bridge = RtcBridge(app_ctx)
         self.hotwords: list[str] = []
 
     async def run(self, on_utterance: OnUtterance) -> None:
-        seg = Segmenter()
-        mic = await asyncio.to_thread(self.robot.microphone.open_pcm)
-        try:
-            while True:
-                try:
-                    frame = await asyncio.to_thread(mic.read, 1.0)
-                except TimeoutError:                                # SDK：1 秒内没有帧
-                    continue
-                if self._speaking:                                  # 播报期间丢弃，避免听到自己
-                    continue
-                pcm = seg.feed(frame.data)
-                if pcm:
-                    asyncio.create_task(self._recognize(pcm, on_utterance))
-        finally:
-            await asyncio.to_thread(mic.close)
-
-    async def _recognize(self, pcm: bytes, on_utterance: OnUtterance) -> None:
-        text = (await providers.asr(pcm, self.hotwords)).strip()
-        if text:
-            await on_utterance(Utterance(text=text, ts=time.time()))
+        self.bridge.on_utterance = on_utterance
+        self.bridge.hotwords = self.hotwords
+        await self.bridge.serve()
 
     async def say(self, text: str) -> None:
-        self._speaking = True
+        from speech import providers
+
+        self.bridge.speaking = True
         try:
-            pcm, rate = await providers.tts(text)
-            playback = await asyncio.to_thread(self.robot.audio.play_pcm, pcm, sample_rate_hz=rate)
-            await asyncio.to_thread(playback.wait, 60.0)            # AudioPlayback 是 Job，wait 到播完
-            await asyncio.sleep(0.3)                                # 留一点尾巴，避免录到回声
+            pcm, _rate = await providers.tts(text)
+            if pcm:
+                await self.bridge.speak(pcm)
         finally:
-            self._speaking = False
+            self.bridge.speaking = False

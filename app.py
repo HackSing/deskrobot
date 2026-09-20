@@ -12,7 +12,7 @@ async def main() -> None:
         connected = app.robot.supports("behavior")
         if not connected:
             app.logger.info("没有连接机器人，全部使用假模块。先执行 watcherobot robot setup。")
-        await run(app.robot if connected else None)
+        await run(app if connected else None)
 
 
 asyncio.run(main())

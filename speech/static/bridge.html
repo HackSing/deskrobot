@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RTC Audio Bridge</title>
+<style>
+  body {
+    font: 14px/1.6 -apple-system, "PingFang SC", monospace;
+    background: #101418; color: #e8ecf1; padding: 16px; max-width: 520px; margin: 0 auto;
+  }
+  h1 { font-size: 16px; }
+  #state { padding: 8px 12px; border-radius: 8px; background: #1a2027; margin: 12px 0; }
+  #state.connected { background: #1e6b3a; }
+  #state.failed { background: #7a2c2c; }
+  #log { font-size: 12px; color: #8a97a5; white-space: pre-wrap; max-height: 60vh; overflow-y: auto; }
+  #startBtn {
+    font-size: 18px; padding: 16px 24px; border-radius: 10px; border: 0;
+    background: #2f7bf6; color: #fff; cursor: pointer; width: 100%; margin: 12px 0;
+  }
+</style>
+</head>
+<body>
+<h1>🔊 RTC 音频桥接（保持此页打开，不要关）</h1>
+<button id="startBtn">点击启动（浏览器要求先点一下才能播放音频）</button>
+<div id="state">等待点击启动…</div>
+<div id="log"></div>
+<script>
+const stateEl = document.getElementById('state');
+const logEl = document.getElementById('log');
+function log(msg) {
+  const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  logEl.textContent = line + '\n' + logEl.textContent;
+  console.log(line);
+}
+function setState(text, cls) {
+  stateEl.textContent = text;
+  stateEl.className = cls || '';
+}
+
+// 单一 16kHz AudioContext：下行(机器人麦克风)自动重采样到 16k 直接喂 ASR；
+// 上行(TTS)以任意采样率建 AudioBuffer，播放时浏览器自动重采样到 16k，
+// 全程不用手写重采样代码。
+const audioCtx = new AudioContext({ sampleRate: 16000 });
+const dest = audioCtx.createMediaStreamDestination();   // 送给机器人的音轨：默认静音，TTS 到时才有声音
+
+const PCM_WORKLET = `
+class PcmCapture extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = []; this.frameSamples = Math.round(sampleRate * 0.06); }
+  process(inputs) {
+    const ch = inputs[0][0];
+    if (!ch) return true;
+    for (let i = 0; i < ch.length; i++) this.buf.push(ch[i]);
+    while (this.buf.length >= this.frameSamples) {
+      const frame = this.buf.splice(0, this.frameSamples);
+      const out = new Int16Array(frame.length);
+      for (let i = 0; i < frame.length; i++) {
+        const s = Math.max(-1, Math.min(1, frame[i]));
+        out[i] = s < 0 ? s * 32768 : s * 32767;
+      }
+      this.port.postMessage(out.buffer, [out.buffer]);
+    }
+    return true;
+  }
+}
+registerProcessor('pcm-capture', PcmCapture);
+`;
+
+let audioInWs = null, audioOutWs = null, peer = null, eventCursor = 0, polling = false;
+const remoteCandidates = [];
+
+async function api(path, opts) {
+  const r = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (!r.ok) throw new Error(`${path} -> HTTP ${r.status}`);
+  return r.status === 204 ? null : r.json();
+}
+
+async function pollEvents() {
+  if (!polling) return;
+  try {
+    const payload = await api(`/api/rtc/events?after=${eventCursor}`);
+    for (const ev of payload.events || []) {
+      eventCursor = Math.max(eventCursor, ev.id || 0);
+      await handleEvent(ev.message || {});
+    }
+  } catch (e) { log('轮询事件失败: ' + e.message); }
+  if (polling) setTimeout(pollEvents, 100);
+}
+
+async function handleEvent(message) {
+  const data = message.data || {};
+  if (message.type === 'evt.rtc.state') {
+    log('设备状态: ' + data.state);
+    if (data.state === 'connected') setState('已连接（等待音频握手）', 'connected');
+    if (data.state === 'failed' || data.state === 'stopped') {
+      setState('已断开: ' + (data.reason || data.state), 'failed');
+      polling = false;
+      stopHeartbeats();
+    }
+    return;
+  }
+  if (message.type !== 'evt.rtc.signal' || !peer) return;
+  if (data.kind === 'answer' && data.sdp) {
+    if (!peer.remoteDescription) {
+      await peer.setRemoteDescription({ type: 'answer', sdp: data.sdp });
+      for (const c of remoteCandidates.splice(0)) await peer.addIceCandidate(c);
+      log('已应用 answer');
+    }
+  } else if (data.kind === 'candidate' && data.candidate) {
+    const c = new RTCIceCandidate({ candidate: data.candidate, sdpMid: data.sdp_mid, sdpMLineIndex: data.sdp_mline_index });
+    if (peer.remoteDescription) await peer.addIceCandidate(c);
+    else remoteCandidates.push(c);
+  }
+}
+
+async function connectAudioInOut() {
+  audioInWs = new WebSocket(`ws://${location.host}/ws/audio-in`);
+  audioInWs.binaryType = 'arraybuffer';
+  audioInWs.onopen = () => log('audio-in 已连接');
+  audioInWs.onclose = () => log('audio-in 断开');
+
+  audioOutWs = new WebSocket(`ws://${location.host}/ws/audio-out`);
+  audioOutWs.binaryType = 'arraybuffer';
+  audioOutWs.onopen = () => log('audio-out 已连接');
+  audioOutWs.onclose = () => log('audio-out 断开');
+  audioOutWs.onmessage = async (event) => {
+    if (!(event.data instanceof ArrayBuffer)) return;
+    const rate = pendingTtsRate || 24000;
+    const pcm = new Int16Array(event.data);
+    const buf = audioCtx.createBuffer(1, pcm.length, rate);
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / (pcm[i] < 0 ? 32768 : 32767);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(dest);
+    src.onended = () => audioOutWs.send(JSON.stringify({ done: true }));
+    src.start();
+    setState('🔊 机器人说话中…', 'connected');
+  };
+}
+let pendingTtsRate = 24000;
+
+async function unlockRealIceCandidates() {
+  // Chrome 默认把本地 ICE candidate 的真实局域网 IP 换成随机 .local mDNS 名字（隐私保护），
+  // 除非页面已经拿到过真实麦克风权限。机器人固件不支持解析 mDNS，收到 .local candidate
+  // 连不上，ICE 直接 peer_connection_failed。这里申请一次真实麦克风只为解锁真实 IP，
+  // 拿到后立刻停掉所有音轨——内容完全不用，机器人应该听房间环境音，不是操作者的麦克风。
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((t) => t.stop());
+    log('已用一次麦克风权限解锁真实 ICE candidate（未采集任何声音）');
+  } catch (e) {
+    log('解锁真实 ICE candidate 失败: ' + e.message + '（连接可能会因 mDNS candidate 失败）');
+  }
+}
+
+let heartbeatTimer = null, feedbackTimer = null;
+
+function startHeartbeats() {
+  // 设备期望持续收到心跳；停发几秒后设备会把会话判定失效并主动断开（已实测复现）。
+  heartbeatTimer = setInterval(() => {
+    if (!polling) return;
+    const browserSendUs = Math.round((performance.timeOrigin + performance.now()) * 1000);
+    api('/api/rtc/clock-ping', { method: 'POST', body: JSON.stringify({ browser_send_us: browserSendUs }) })
+      .catch((e) => log('clock-ping 失败: ' + e.message));
+  }, 1500);
+  feedbackTimer = setInterval(() => {
+    if (!polling) return;
+    api('/api/rtc/feedback', {
+      method: 'POST',
+      body: JSON.stringify({
+        display_fps_x100: 0, frame_age_p95_us: 0, rtt_us: 0,
+        audio_queue_ms: 0, audio_packet_loss_x100: 0, audio_jitter_us: 0,
+        audio_concealed_frames: 0, congestion_level: 0,
+      }),
+    }).catch((e) => log('feedback 失败: ' + e.message));
+  }, 1000);
+}
+
+function stopHeartbeats() {
+  clearInterval(heartbeatTimer);
+  clearInterval(feedbackTimer);
+  heartbeatTimer = feedbackTimer = null;
+}
+
+async function start() {
+  setState('请求麦克风路径…');
+  const blob = new Blob([PCM_WORKLET], { type: 'application/javascript' });
+  await audioCtx.audioWorklet.addModule(URL.createObjectURL(blob));
+  await unlockRealIceCandidates();
+
+  await connectAudioInOut();
+
+  await api('/api/rtc/start', { method: 'POST', body: JSON.stringify({ mode: 'audio' }) });
+  polling = true;
+  pollEvents();
+  startHeartbeats();
+
+  peer = new RTCPeerConnection({ iceServers: [] });
+  peer.addTrack(dest.stream.getAudioTracks()[0], dest.stream);
+  peer.addEventListener('track', (event) => {
+    const remoteStream = event.streams[0] || new MediaStream([event.track]);
+    const srcNode = audioCtx.createMediaStreamSource(remoteStream);
+    const capture = new AudioWorkletNode(audioCtx, 'pcm-capture');
+    capture.port.onmessage = (e) => {
+      if (audioInWs && audioInWs.readyState === WebSocket.OPEN) audioInWs.send(e.data);
+    };
+    srcNode.connect(capture);
+    log('收到机器人麦克风音轨');
+    setState('✅ 全双工已建立，正在监听', 'connected');
+  });
+  peer.addEventListener('connectionstatechange', () => {
+    log('peer 状态: ' + peer.connectionState);
+    if (['failed', 'disconnected', 'closed'].includes(peer.connectionState)) {
+      setState('连接断开: ' + peer.connectionState, 'failed');
+    }
+  });
+  peer.addEventListener('icecandidate', (event) => {
+    if (!event.candidate) { log('本地 ICE 收集完毕'); return; }
+    log('本地 candidate: ' + event.candidate.candidate);
+    api('/api/rtc/signal', {
+      method: 'POST',
+      body: JSON.stringify({
+        kind: 'candidate',
+        candidate: event.candidate.candidate,
+        sdp_mid: event.candidate.sdpMid || '0',
+        sdp_mline_index: event.candidate.sdpMLineIndex || 0,
+      }),
+    }).catch((e) => log('发送 candidate 失败: ' + e.message));
+  });
+
+  const offer = await peer.createOffer();
+  await peer.setLocalDescription(offer);
+  await api('/api/rtc/signal', { method: 'POST', body: JSON.stringify({ kind: 'offer', sdp: offer.sdp }) });
+  setState('offer 已发送，等待机器人应答…');
+}
+
+document.getElementById('startBtn').onclick = async () => {
+  document.getElementById('startBtn').disabled = true;
+  await audioCtx.resume();   // Chrome 自动播放策略：AudioContext 必须在用户手势里 resume 才会真正处理音频
+  log('AudioContext 状态: ' + audioCtx.state);
+  start().catch((e) => { log('启动失败: ' + e.message); setState('启动失败: ' + e.message, 'failed'); });
+};
+
+window.addEventListener('beforeunload', () => {
+  polling = false;
+  stopHeartbeats();
+  api('/api/rtc/stop', { method: 'POST' }).catch(() => {});
+});
+</script>
+</body>
+</html>

@@ -30,18 +30,24 @@ def _flag(name: str, default: bool) -> bool:
     return os.environ.get(name, "1" if default else "0") == "1"
 
 
-async def run(sdk_robot=None) -> None:
-    """sdk_robot = ApplicationContext.robot；为 None 时全部用假模块。"""
+async def run(app_ctx=None) -> None:
+    """app_ctx = ApplicationContext；为 None 时全部用假模块。
+
+    真语音（speech/real.py）要用 WebRTC 全双工做输入输出，需要 app_ctx.rtc，
+    光有 app_ctx.robot 不够，所以这里传完整的 ApplicationContext，不再只传
+    app.robot。RealRobot 仍然只碰 .robot，签名不变。
+    """
     from core.orchestrator import Orchestrator
     from web.server import build_app, lan_ip
 
-    no_robot = sdk_robot is None
+    no_robot = app_ctx is None
+    sdk_robot = app_ctx.robot if app_ctx else None
     if _flag("USE_FAKE_SPEECH", no_robot):
         from mocks.fake_speech import FakeSpeech
         speech = FakeSpeech()
     else:
         from speech.real import RealSpeech
-        speech = RealSpeech(sdk_robot)
+        speech = RealSpeech(app_ctx)
     if _flag("USE_FAKE_ROBOT", no_robot):
         from mocks.fake_robot import FakeRobot
         robot = FakeRobot()
